@@ -188,7 +188,7 @@ void Main ()
 //test_8();
 //test_9();
 //test_10();
-test_11();
+// test_11();
 
 	if (Fork () == 0) {
 		Delay (10000);			// car 2
