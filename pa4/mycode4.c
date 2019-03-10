@@ -19,17 +19,18 @@ static struct thread {			// thread table
 } thread[MAXTHREADS];
 
 int curThread = 0;
+int curCreate = 0;
 
 static struct linklist {
-	linklist *last;
-	linklist *next;
-	int threadId;
-	void linklist(int a){
-		threadId = a;
-	}
-};
-linklist *prehead = new linklist(-1);
-linklist *tail = new linklist(-1)
+	int last;
+	int next;
+	// int threadId;
+} linklist[MAXTHREADS];
+int head=-1;
+int tail=-1;
+// linklist *prehead = new linklist(-1);
+// linklist *tail = new linklist(-1)
+int me=-1; //for the second return of setjmp (both 0&1 return 1)
 
 
 #define STACKSIZE	65536		// maximum size of thread stack
@@ -52,8 +53,11 @@ void MyInitThreads ()
 	}
 
 	thread[0].valid = 1;			// initialize thread 0
-
 	MyInitThreadsCalled = 1;
+	// head=0;
+	// tail=0;
+	// linklist[head].last=-1;
+	// linklist[head].next=tail;
 
 	// Printf("aaaa");
 	for(int j = 0; j < MAXTHREADS; j++) {
@@ -69,11 +73,11 @@ void MyInitThreads ()
 		}
 	}
 
-	// initialize the linklist with prehead->head->tail
-	linklist *head = new linklist(0);
-	linklist *prehead->next = head;
-	head->next = tail;
-	tail->last = head;
+	// // initialize the linklist with prehead->head->tail
+	// linklist[]
+	// linklist *prehead->next = head;
+	// head->next = tail;
+	// tail->last = head;
 }
 
 /*  	MyCreateThread (f, p) creates a new thread to execute
@@ -127,15 +131,16 @@ int MyCreateThread (f, p)
 
 	int cur=0;
 	int found=0;
-	for(int i=curThread+1;i<MAXTHREADS;i++){
+	for(int i=curCreate+1;i<MAXTHREADS+curCreate;i++){
 		if(!thread[i % MAXTHREADS].valid){   //start from the current thread, find the next avialable thread 
 			found=1;
+			curCreate=i % MAXTHREADS;
 			cur=i % MAXTHREADS;
 			thread[cur].valid=1;
 			thread[cur].tFunc = *func;
 			thread[cur].fPara = param;
 			memcpy(thread[cur].env, thread[cur].init, sizeof(jmp_buf));
-			Printf("%d",cur);
+			// Printf("%d",cur);
 			break;
 		}
 	}
@@ -144,12 +149,20 @@ int MyCreateThread (f, p)
 	}
 	
 	// add new node to the end of the linklist
-	linklist *curNode = new linklist(cur);
-	curNode->last = tail;
-	tail->next = curNode;
-	tail = curNode;
-	// Printf("cccc");
-	// thread[1].valid = 1;	// mark the entry for the new thread valid
+	if(head==tail && head==-1){  // first number
+		head=cur;
+		tail=cur;
+		linklist[head].last=-1;
+		linklist[head].next=-1;
+
+	}
+	else{  // second number
+		linklist[tail].next = cur;  //when head=tail=0.. list[0].next=1
+		linklist[cur].last = tail;  //list[1].last=0
+		linklist[cur].next = -1;    //list[1].next=-1
+		tail=cur;					//tail=1
+	}  
+	// Printf("head%d,tail%d\n",head,tail);
 
 	return (cur);		// done, return new thread ID
 }
@@ -184,24 +197,45 @@ int MyYieldThread (t)
 
 	// modify the linklist
 	// first add cur node to the end
-    linklist *curNode = new linklist(curThread);
-    curNode->last=tail;
-    tail->next=curNode;
-    tail=curNode;
-
-    linklist *tmp = prehead->next;
-    while(tmp->value!=t){
-    	tmp = tmp -> next;
+    linklist[tail].next = curThread;  //must exist
+    linklist[curThread].last = tail;
+    linklist[curThread].next = -1;
+    tail=curThread;
+    // if the thread yielding to is the first in linklist
+    if(head==t){
+    	head=linklist[head].next;
+    	linklist[head].last=-1;
     }
-    tmp->last->next = tmp -> next;
+    // if the thread yielding to is not the first in linklist
+    else{
+    	for(int i=0;i<MAXTHREADS;i++){
+	    	if(linklist[i].next==t){ 
+	    		// if(linklist[i].next.next){
+    			int tmp = linklist[linklist[i].next].next;  //this must exist because the last one is the one that just be pushed in
+	    		linklist[i].next = tmp;
+	    		linklist[tmp].last = i;
+	    		// }
+	    		break;
+	    	}
+	    }
+    }
+    // Printf("head%d,tail%d\n",head,tail);
 
-    if (setjmp (thread[curThread].env) == 0) { //save current thread's env, so the next time a thread yield to current thread, it will begin at this point
-            Printf("\nffffff %d",t);
+    // save env and jmp
+    int caller=-1;
+    if ((caller = setjmp (thread[curThread].env)) == 0) { //save current thread's env, so the next time a thread yield to current thread, it will begin at this point
+            // Printf("\nffffff %d",t);
+            me = curThread;
             curThread = t;                     //after saving, change the global viarable curThread so that 
-            longjmp (thread[t].env, t);
+            longjmp (thread[t].env, me);
     }
-
-
+    else{ //because caller equals to 1 both when caller=1/0
+    	if(caller==1 && me==0)
+    		return 0;
+    	else
+    		return caller;
+	}
+    return caller;
 
 }
 
@@ -229,6 +263,33 @@ void MySchedThread ()
 		Printf ("MySchedThread: Must call MyInitThreads first\n");
 		Exit ();
 	}
+	if(thread[curThread].valid){ //if the caller was not exited
+		linklist[tail].next = curThread;
+	    linklist[curThread].last = tail;
+	    linklist[curThread].next = -1;
+	    tail=curThread;
+	}
+    // get the first thread in the queue and change head
+    int t = head;
+	head=linklist[head].next;
+	// printf("%d%d%d%d\n", t,head,curThread,thread[curThread].valid);
+	if(head!=-1) linklist[head].last = -1;
+	else tail=-1; //list empty, so change the tial to -1 so in 'mycreate', the will treate the list as empty
+    // if the thread yielding to is not the first in linklist
+    
+
+    // save env and jmp
+    if(thread[curThread].valid){
+	    if (setjmp (thread[curThread].env) == 0) { //save current thread's env, so the next time a thread yield to current thread, it will begin at this point
+	            // Printf("\nffffff %d",t);
+	            curThread = t;                     //after saving, change the global viarable curThread so that 
+	            longjmp (thread[t].env, -1);  //because we need the caller to be -1 in yield, when it's resumed from MySchedThread
+	    }
+	}
+	else{
+		curThread = t;                     //after saving, change the global viarable curThread so that 
+	    longjmp (thread[t].env, -1);  //because we need the caller to be -1 in yield, when it's resumed from MySchedThread
+	}
 }
 
 /* 	MyExitThread () causes the currently running thread to exit. 
@@ -240,4 +301,35 @@ void MyExitThread ()
 		Printf ("MyExitThread: Must call MyInitThreads first\n");
 		Exit ();
 	}
+
+	thread[curThread].valid = 0;
+	
+	// int preT = linklist[curThread].last;
+	// int nextT = linklist[curThread].next;
+	// Printf("cur%d,pre%d,nex%d,head%d\n",curThread,preT,nextT,head);
+	// if(preT==-1){
+	// 	head=linklist[head].next;
+ //    	if(head!=-1) linklist[head].last=-1;
+	// }
+	// else if(nextT==-1){
+	// 	tail=linklist[tail].last;
+ //    	if(tail!=-1) linklist[tail].next=-1;
+	// }
+	// else{
+	// 	linklist[preT].next = nextT;
+	// 	linklist[nextT].last = preT;
+	// }
+
+	// MyYieldThread(head);
+	for(int i=0;i<MAXTHREADS;i++){
+		if(thread[i].valid){
+			MySchedThread();
+			return;
+		}
+	}
+	Exit();
+
 }
+
+
+
